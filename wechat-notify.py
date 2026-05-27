@@ -45,14 +45,19 @@ def main():
         content = f"Claude Code needs your approval\n\n{message[:1500]}"
 
     try:
+        # 先取消上一个待推送（连续弹出确认窗 = 用户正在操作，无需提醒上一个）
+        try:
+            requests.post(f"http://127.0.0.1:{port}/cancel-pending", json={}, timeout=3)
+        except Exception:
+            pass  # cancel 失败不阻塞 send
         resp = requests.post(
-            f"http://127.0.0.1:{port}/send",
-            json={"content": content},
+            f"http://127.0.0.1:{port}/send-delayed",
+            json={"content": content, "delay": 8},
             timeout=5,
         )
         data = resp.json()
         if data.get("ok"):
-            print("[wechat-notify] 已推送", file=sys.stderr)
+            print("[wechat-notify] will notify after 8s delay", file=sys.stderr)
         else:
             print(f"[wechat-notify] {data.get('message')}", file=sys.stderr)
     except requests.ConnectionError:

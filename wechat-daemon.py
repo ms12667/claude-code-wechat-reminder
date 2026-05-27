@@ -30,6 +30,8 @@ class Daemon:
         self.chatid = self._load_chatid()
         self.running = True
         self._pending_msg = set()
+        self._delay_timer = None
+        self._delay_lock = threading.RLock()
 
     # ── config ──────────────────────────────────────────────
     def _load_config(self):
@@ -114,6 +116,32 @@ class Daemon:
         if self.running:
             self.start_ws()
 
+    def send_delayed(self, content, delay=8):
+        """取消上一个待推送，启动新的 delay 秒定时器。用户连续操作时不断重置计时。"""
+        with self._delay_lock:
+            self.cancel_pending()
+            self._delay_timer = threading.Timer(delay, self._do_delayed_send, args=[content])
+            self._delay_timer.start()
+            return True, f"将在 {delay}s 后推送"
+
+    def cancel_pending(self):
+        """取消待推送的定时器（用户已操作，无需提醒）。"""
+        with self._delay_lock:
+            if self._delay_timer is not None:
+                self._delay_timer.cancel()
+                self._delay_timer = None
+                return True, "已取消"
+            return False, "无待推送"
+
+    def _do_delayed_send(self, content):
+        with self._delay_lock:
+            self._delay_timer = None
+        ok, msg = self.send_msg(content)
+        if ok:
+            self._log("延迟推送成功")
+        else:
+            self._log(f"延迟推送失败: {msg}")
+
     def send_msg(self, content):
         if not self.ws or not self.authenticated.is_set():
             return False, "未连接"
@@ -146,19 +174,39 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/health":
             ok = _daemon.authenticated.is_set()
-            self._respond(200, {"ok": ok, "chatid": bool(_daemon.chatid)})
+            has_pending = _daemon._delay_timer is not None
+            self._respond(200, {"ok": ok, "chatid": bool(_daemon.chatid), "pending": has_pending})
         else:
             self._respond(404, {"error": "not found"})
 
     def do_POST(self):
-        if self.path != "/send":
+        if self.path == "/send":
+            self._handle_send()
+        elif self.path == "/send-delayed":
+            self._handle_send_delayed()
+        elif self.path == "/cancel-pending":
+            self._handle_cancel_pending()
+        else:
             self._respond(404, {"error": "not found"})
-            return
+
+    def _handle_send(self):
         length = int(self.headers.get("Content-Length", 0))
         body = json.loads(self.rfile.read(length)) if length > 0 else {}
-        content = body.get("content", "Claude Code 需要确认")
+        content = body.get("content", "Claude Code needs your approval")
         ok, msg = _daemon.send_msg(content)
         self._respond(200 if ok else 503, {"ok": ok, "message": msg})
+
+    def _handle_send_delayed(self):
+        length = int(self.headers.get("Content-Length", 0))
+        body = json.loads(self.rfile.read(length)) if length > 0 else {}
+        content = body.get("content", "Claude Code needs your approval")
+        delay = int(body.get("delay", 8))
+        ok, msg = _daemon.send_delayed(content, delay)
+        self._respond(200 if ok else 503, {"ok": ok, "message": msg})
+
+    def _handle_cancel_pending(self):
+        ok, msg = _daemon.cancel_pending()
+        self._respond(200, {"ok": ok, "message": msg})
 
     def _respond(self, code, data):
         payload = json.dumps(data, ensure_ascii=False).encode("utf-8")
