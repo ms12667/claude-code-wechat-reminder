@@ -1,4 +1,5 @@
 """Claude Code 权限确认 → 本地守护进程 → 企业微信智能机器人 → 手机微信"""
+
 import sys
 import json
 import os

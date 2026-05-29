@@ -1,6 +1,7 @@
 """企业微信智能机器人长连接守护进程
 维护 ws://openws.work.weixin.qq.com 连接，接收本地 hook 请求并推送微信通知。
 """
+
 import json
 import os
 import sys
@@ -64,11 +65,16 @@ class Daemon:
     def _on_open(self, ws):
         self.ws = ws
         self.auth_req_id = str(uuid.uuid4())
-        ws.send(json.dumps({
-            "cmd": "aibot_subscribe",
-            "headers": {"req_id": self.auth_req_id},
-            "body": {"bot_id": self.bot_id, "secret": self.secret},
-        }, ensure_ascii=False))
+        ws.send(
+            json.dumps(
+                {
+                    "cmd": "aibot_subscribe",
+                    "headers": {"req_id": self.auth_req_id},
+                    "body": {"bot_id": self.bot_id, "secret": self.secret},
+                },
+                ensure_ascii=False,
+            )
+        )
 
     def _on_message(self, ws, raw):
         data = json.loads(raw)
@@ -82,7 +88,9 @@ class Daemon:
         if req_id == self.auth_req_id:
             if errcode == 0:
                 self.authenticated.set()
-                self._log(f"认证成功。chatid={'已有' if self.chatid else '等待首次消息'}")
+                self._log(
+                    f"认证成功。chatid={'已有' if self.chatid else '等待首次消息'}"
+                )
             else:
                 self._log(f"认证失败: {data.get('errmsg')}")
 
@@ -120,7 +128,9 @@ class Daemon:
         """取消上一个待推送，启动新的 delay 秒定时器。用户连续操作时不断重置计时。"""
         with self._delay_lock:
             self.cancel_pending()
-            self._delay_timer = threading.Timer(delay, self._do_delayed_send, args=[content])
+            self._delay_timer = threading.Timer(
+                delay, self._do_delayed_send, args=[content]
+            )
             self._delay_timer.start()
             return True, f"将在 {delay}s 后推送"
 
@@ -146,19 +156,26 @@ class Daemon:
         if not self.ws or not self.authenticated.is_set():
             return False, "未连接"
         if not self.chatid:
-            return False, "未获取 chatid，请先在手机企业微信给机器人发一条消息（如 hello）"
+            return (
+                False,
+                "未获取 chatid，请先在手机企业微信给机器人发一条消息（如 hello）",
+            )
         req_id = str(uuid.uuid4())
         self._pending_msg.add(req_id)
-        self.ws.send(json.dumps({
-            "cmd": "aibot_send_msg",
-            "headers": {"req_id": req_id},
-            "body": {
-                "chatid": self.chatid,
-                "chat_type": 1,
-                "msgtype": "markdown",
-                "markdown": {"content": content},
-            },
-        }))
+        self.ws.send(
+            json.dumps(
+                {
+                    "cmd": "aibot_send_msg",
+                    "headers": {"req_id": req_id},
+                    "body": {
+                        "chatid": self.chatid,
+                        "chat_type": 1,
+                        "msgtype": "markdown",
+                        "markdown": {"content": content},
+                    },
+                }
+            )
+        )
         return True, "ok"
 
     def _log(self, msg):
@@ -175,7 +192,9 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/health":
             ok = _daemon.authenticated.is_set()
             has_pending = _daemon._delay_timer is not None
-            self._respond(200, {"ok": ok, "chatid": bool(_daemon.chatid), "pending": has_pending})
+            self._respond(
+                200, {"ok": ok, "chatid": bool(_daemon.chatid), "pending": has_pending}
+            )
         else:
             self._respond(404, {"error": "not found"})
 
@@ -244,7 +263,9 @@ def main():
     bot_id = config.get("bot_id", "")
     secret = config.get("secret", "")
     if not bot_id or not secret or "你的BotID" in bot_id:
-        print("请先在 wechat-notify-config.json 中填写 bot_id 和 secret", file=sys.stderr)
+        print(
+            "请先在 wechat-notify-config.json 中填写 bot_id 和 secret", file=sys.stderr
+        )
         sys.exit(1)
 
     port = find_port(HTTP_PORT)
